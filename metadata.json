@@ -1,0 +1,6 @@
+{
+  "name": "CineScribbl",
+  "description": "Multiplayer Telugu Movie Drawing and Guessing Game",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
