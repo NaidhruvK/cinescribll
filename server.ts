@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { Server as SocketIOServer } from 'socket.io';
@@ -10,7 +11,7 @@ import { setupGameSocket } from './server/socket/gameSocket';
 async function startServer() {
   const app = express();
   const server = http.createServer(app);
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
   // Initialize Socket.IO
   const io = new SocketIOServer(server, {
@@ -33,6 +34,7 @@ async function startServer() {
     res.json({
       status: 'ok',
       service: 'CineScribbl Server',
+      port: PORT,
       timestamp: new Date().toISOString(),
     });
   });
@@ -53,15 +55,25 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    // Resolve static client directory
+    let distPath = path.join(process.cwd(), 'dist');
+    if (!fs.existsSync(path.join(distPath, 'index.html')) && typeof __dirname !== 'undefined') {
+      distPath = __dirname;
+    }
+
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send('CineScribbl client build not found');
+      }
     });
   }
 
   server.listen(PORT, '0.0.0.0', () => {
-    console.log(`🎬 CineScribbl Server running on http://localhost:${PORT}`);
+    console.log(`🎬 CineScribbl Server listening on port ${PORT} (0.0.0.0)`);
     loadMovies();
   });
 }

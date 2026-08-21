@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import bundledMovies from './movies.json';
 
 let cachedMovies: string[] = [];
 
@@ -13,7 +14,6 @@ export function loadMovies(): string[] {
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf-8');
       const parsed: string[] = JSON.parse(data);
-      // Clean, trim, and unique
       const unique = Array.from(
         new Set(
           parsed
@@ -26,7 +26,21 @@ export function loadMovies(): string[] {
       return cachedMovies;
     }
   } catch (err) {
-    console.error('[MovieService] Error loading movies.json:', err);
+    console.warn('[MovieService] Note: reading from fs failed, falling back to bundled dataset:', err);
+  }
+
+  // Fallback to bundled movies from import
+  if (Array.isArray(bundledMovies) && bundledMovies.length > 0) {
+    const unique = Array.from(
+      new Set(
+        bundledMovies
+          .map((m) => String(m).trim())
+          .filter((m) => m.length > 0)
+      )
+    );
+    cachedMovies = unique;
+    console.log(`[MovieService] Loaded ${cachedMovies.length} Telugu movies from bundled dataset.`);
+    return cachedMovies;
   }
 
   return cachedMovies;
