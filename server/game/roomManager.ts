@@ -5,6 +5,9 @@ import {
   ChatMessage,
   DrawFill,
   DrawStroke,
+  DrawStrokeEnd,
+  DrawStrokeMove,
+  DrawStrokeStart,
   GameState,
   GameStatus,
   Player,
@@ -280,6 +283,7 @@ export class RoomManager {
     this.clearAllTimers(room);
     room.canvasHistory = [];
     room.correctGuessCount = 0;
+    this.io.to(room.id).emit('clear_canvas');
 
     const activePlayers = room.turnOrder
       .map((id) => room.players.get(id))
@@ -632,6 +636,41 @@ export class RoomManager {
     this.broadcastSystemMessage(room.id, '🔄 Host restarted the game! Ready in lobby.', 'system');
     this.broadcastRoomState(room.id);
     return true;
+  }
+
+  public startStroke(socketId: string, data: DrawStrokeStart): void {
+    const session = this.socketToPlayer.get(socketId);
+    if (!session) return;
+    const room = this.rooms.get(session.roomId);
+    if (!room || room.status !== 'DRAWING' || room.currentArtistId !== session.playerId) return;
+
+    // Relay live stroke start to all other players in the room immediately
+    this.io.to(room.id).except(socketId).emit('draw_stroke_start', data);
+  }
+
+  public moveStroke(socketId: string, data: DrawStrokeMove): void {
+    const session = this.socketToPlayer.get(socketId);
+    if (!session) return;
+    const room = this.rooms.get(session.roomId);
+    if (!room || room.status !== 'DRAWING' || room.currentArtistId !== session.playerId) return;
+
+    // Relay live stroke segments to all other players in the room immediately
+    this.io.to(room.id).except(socketId).emit('draw_stroke_move', data);
+  }
+
+  public endStroke(socketId: string, data: DrawStrokeEnd): void {
+    const session = this.socketToPlayer.get(socketId);
+    if (!session) return;
+    const room = this.rooms.get(session.roomId);
+    if (!room || room.status !== 'DRAWING' || room.currentArtistId !== session.playerId) return;
+
+    // Persist full stroke in canvas history for reconnects and late joiners
+    if (data.stroke && data.stroke.points && data.stroke.points.length > 0) {
+      room.canvasHistory.push({ type: 'stroke', data: data.stroke });
+    }
+
+    // Relay stroke end to all other players
+    this.io.to(room.id).except(socketId).emit('draw_stroke_end', data);
   }
 
   public addCanvasStroke(socketId: string, stroke: DrawStroke): void {

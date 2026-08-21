@@ -1,11 +1,15 @@
 import { Clock, Film, Sparkles } from 'lucide-react';
 import React, { useEffect, useRef } from 'react';
+import { Socket } from 'socket.io-client';
 import { getAvatar } from '../constants/avatars';
 import {
   CanvasAction,
   ChatMessage,
   DrawFill,
   DrawStroke,
+  DrawStrokeEnd,
+  DrawStrokeMove,
+  DrawStrokeStart,
   GameState,
   Player,
 } from '../types';
@@ -23,7 +27,11 @@ interface GameScreenProps {
   movieChoices: string[];
   canvasActions: CanvasAction[];
   lastNotification: { text: string; type: 'correct' | 'close' | 'system'; timestamp: number } | null;
+  socket?: Socket | null;
   onSelectMovie: (movie: string) => void;
+  onSendStrokeStart?: (data: DrawStrokeStart) => void;
+  onSendStrokeMove?: (data: DrawStrokeMove) => void;
+  onSendStrokeEnd?: (data: DrawStrokeEnd) => void;
   onSendStroke: (stroke: DrawStroke) => void;
   onClearCanvas: () => void;
   onUndoStroke: () => void;
@@ -45,7 +53,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
   movieChoices,
   canvasActions,
   lastNotification,
+  socket,
   onSelectMovie,
+  onSendStrokeStart,
+  onSendStrokeMove,
+  onSendStrokeEnd,
   onSendStroke,
   onClearCanvas,
   onUndoStroke,
@@ -210,6 +222,10 @@ export const GameScreen: React.FC<GameScreenProps> = ({
           <DrawingCanvas
             isArtist={isArtist && gameState.status === 'DRAWING'}
             canvasActions={canvasActions}
+            socket={socket}
+            onSendStrokeStart={onSendStrokeStart}
+            onSendStrokeMove={onSendStrokeMove}
+            onSendStrokeEnd={onSendStrokeEnd}
             onSendStroke={onSendStroke}
             onClearCanvas={onClearCanvas}
             onUndoStroke={onUndoStroke}

@@ -13,6 +13,7 @@ import { AvatarId, RoomSettings } from './types';
 
 export const App: React.FC = () => {
   const {
+    socket,
     isConnected,
     gameState,
     currentPlayer,
@@ -26,6 +27,9 @@ export const App: React.FC = () => {
     joinRoom,
     startGame,
     selectMovie,
+    sendStrokeStart,
+    sendStrokeMove,
+    sendStrokeEnd,
     sendStroke,
     sendFill,
     clearCanvas,
@@ -119,7 +123,11 @@ export const App: React.FC = () => {
             movieChoices={movieChoices}
             canvasActions={canvasActions}
             lastNotification={lastNotification}
+            socket={socket}
             onSelectMovie={selectMovie}
+            onSendStrokeStart={sendStrokeStart}
+            onSendStrokeMove={sendStrokeMove}
+            onSendStrokeEnd={sendStrokeEnd}
             onSendStroke={sendStroke}
             onClearCanvas={clearCanvas}
             onUndoStroke={undoStroke}

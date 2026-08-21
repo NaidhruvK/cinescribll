@@ -6,6 +6,9 @@ import {
   ChatMessage,
   DrawFill,
   DrawStroke,
+  DrawStrokeEnd,
+  DrawStrokeMove,
+  DrawStrokeStart,
   GameState,
   Player,
   RoomSettings,
@@ -88,8 +91,25 @@ export function useSocket() {
       setMovieChoices(choices);
     });
 
+    socket.on('draw_stroke_end', (data: DrawStrokeEnd) => {
+      if (data.stroke) {
+        setCanvasActions((prev) => {
+          // Avoid duplicate stroke if already in history
+          if (prev.some((a) => a.type === 'stroke' && a.data.id === data.stroke.id)) {
+            return prev;
+          }
+          return [...prev, { type: 'stroke', data: data.stroke }];
+        });
+      }
+    });
+
     socket.on('draw_stroke', (stroke: DrawStroke) => {
-      setCanvasActions((prev) => [...prev, { type: 'stroke', data: stroke }]);
+      setCanvasActions((prev) => {
+        if (prev.some((a) => a.type === 'stroke' && a.data.id === stroke.id)) {
+          return prev;
+        }
+        return [...prev, { type: 'stroke', data: stroke }];
+      });
     });
 
     socket.on('draw_fill', (fill: DrawFill) => {
@@ -238,6 +258,32 @@ export function useSocket() {
     }
   }, []);
 
+  const sendStrokeStart = useCallback((data: DrawStrokeStart) => {
+    if (socketRef.current) {
+      socketRef.current.emit('draw_stroke_start', data);
+    }
+  }, []);
+
+  const sendStrokeMove = useCallback((data: DrawStrokeMove) => {
+    if (socketRef.current) {
+      socketRef.current.emit('draw_stroke_move', data);
+    }
+  }, []);
+
+  const sendStrokeEnd = useCallback((data: DrawStrokeEnd) => {
+    if (socketRef.current) {
+      if (data.stroke) {
+        setCanvasActions((prev) => {
+          if (prev.some((a) => a.type === 'stroke' && a.data.id === data.stroke.id)) {
+            return prev;
+          }
+          return [...prev, { type: 'stroke', data: data.stroke }];
+        });
+      }
+      socketRef.current.emit('draw_stroke_end', data);
+    }
+  }, []);
+
   const sendStroke = useCallback((stroke: DrawStroke) => {
     if (socketRef.current) {
       setCanvasActions((prev) => [...prev, { type: 'stroke', data: stroke }]);
@@ -316,6 +362,9 @@ export function useSocket() {
     joinRoom,
     startGame,
     selectMovie,
+    sendStrokeStart,
+    sendStrokeMove,
+    sendStrokeEnd,
     sendStroke,
     sendFill,
     clearCanvas,

@@ -63,6 +63,24 @@ export interface DrawStroke {
   isEraser: boolean;
 }
 
+export interface DrawStrokeStart {
+  strokeId: string;
+  point: DrawPoint;
+  color: string;
+  size: number;
+  isEraser: boolean;
+}
+
+export interface DrawStrokeMove {
+  strokeId: string;
+  points: DrawPoint[];
+}
+
+export interface DrawStrokeEnd {
+  strokeId: string;
+  stroke: DrawStroke;
+}
+
 export interface DrawFill {
   x: number;
   y: number;
@@ -139,6 +157,9 @@ export interface ClientToServerEvents {
 
   select_movie: (movie: string) => void;
 
+  draw_stroke_start: (data: DrawStrokeStart) => void;
+  draw_stroke_move: (data: DrawStrokeMove) => void;
+  draw_stroke_end: (data: DrawStrokeEnd) => void;
   draw_stroke: (stroke: DrawStroke) => void;
   draw_fill: (fill: DrawFill) => void;
   clear_canvas: () => void;
@@ -154,6 +175,9 @@ export interface ServerToClientEvents {
   player_joined: (player: Player) => void;
   player_left: (data: { playerId: string; nickname: string }) => void;
   chat_message: (message: ChatMessage) => void;
+  draw_stroke_start: (data: DrawStrokeStart) => void;
+  draw_stroke_move: (data: DrawStrokeMove) => void;
+  draw_stroke_end: (data: DrawStrokeEnd) => void;
   draw_stroke: (stroke: DrawStroke) => void;
   draw_fill: (fill: DrawFill) => void;
   clear_canvas: () => void;

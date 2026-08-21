@@ -1,5 +1,13 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
-import { AvatarId, DrawFill, DrawStroke, RoomSettings } from '../../src/types';
+import {
+  AvatarId,
+  DrawFill,
+  DrawStroke,
+  DrawStrokeEnd,
+  DrawStrokeMove,
+  DrawStrokeStart,
+  RoomSettings,
+} from '../../src/types';
 import { RoomManager } from '../game/roomManager';
 
 export function setupGameSocket(io: SocketIOServer, roomManager: RoomManager) {
@@ -116,7 +124,19 @@ export function setupGameSocket(io: SocketIOServer, roomManager: RoomManager) {
       roomManager.selectMovie(socket.id, movie);
     });
 
-    // Drawing events
+    // Drawing events - live streaming and stroke actions
+    socket.on('draw_stroke_start', (data: DrawStrokeStart) => {
+      roomManager.startStroke(socket.id, data);
+    });
+
+    socket.on('draw_stroke_move', (data: DrawStrokeMove) => {
+      roomManager.moveStroke(socket.id, data);
+    });
+
+    socket.on('draw_stroke_end', (data: DrawStrokeEnd) => {
+      roomManager.endStroke(socket.id, data);
+    });
+
     socket.on('draw_stroke', (stroke: DrawStroke) => {
       roomManager.addCanvasStroke(socket.id, stroke);
     });
