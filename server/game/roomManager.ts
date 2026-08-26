@@ -274,7 +274,11 @@ export class RoomManager {
       p.hasGuessed = false;
     });
 
-    this.broadcastSystemMessage(room.id, '🎬 Lights, Camera, Action! Game Started!', 'system');
+    this.broadcastSystemMessage(
+      room.id,
+      `🎬 Lights, Camera, Action! Game Started - Round 1 of ${room.totalRounds}!`,
+      'system'
+    );
     this.startTurn(room);
     return { success: true };
   }
@@ -301,16 +305,27 @@ export class RoomManager {
     }
 
     if (room.currentTurnIndex >= activePlayers.length) {
-      // Completed full round of turns
+      // Completed full round of turns across all active players
       room.round++;
       room.currentTurnIndex = 0;
       if (room.round > room.totalRounds) {
         this.endGame(room);
         return;
       }
+      this.broadcastSystemMessage(
+        room.id,
+        `🔔 Round ${room.round} of ${room.totalRounds} starts now!`,
+        'system'
+      );
     }
 
     const artist = activePlayers[room.currentTurnIndex];
+    if (!artist) {
+      room.currentTurnIndex = 0;
+      this.startTurn(room);
+      return;
+    }
+
     room.currentArtistId = artist.id;
     room.currentMovie = null;
     room.status = 'CHOOSING_MOVIE';
@@ -561,11 +576,26 @@ export class RoomManager {
       total: p.score,
     }));
 
+    const activePlayers = room.turnOrder
+      .map((id) => room.players.get(id))
+      .filter((p): p is Player => !!p && p.connected);
+
+    const isLastTurnInRound = room.currentTurnIndex + 1 >= activePlayers.length;
+    const isFinalTurnOfGame = isLastTurnInRound && room.round >= room.totalRounds;
+
     this.broadcastSystemMessage(
       room.id,
-      `⏰ Round ended! The Telugu movie was: "${room.currentMovie}"`,
+      `⏰ Turn ended! The Telugu movie was: "${room.currentMovie}"`,
       'system'
     );
+
+    if (isLastTurnInRound && !isFinalTurnOfGame) {
+      this.broadcastSystemMessage(
+        room.id,
+        `🏁 Round ${room.round} completed! Round ${room.round + 1} starting soon...`,
+        'system'
+      );
+    }
 
     this.io.to(room.id).emit('round_ended', {
       movie: room.currentMovie || '',
@@ -772,12 +802,19 @@ export class RoomManager {
     const player = room.players.get(playerId);
     if (!player) return;
 
+    const removedIndex = room.turnOrder.indexOf(playerId);
     room.players.delete(playerId);
     room.turnOrder = room.turnOrder.filter((id) => id !== playerId);
 
+    if (removedIndex !== -1 && removedIndex < room.currentTurnIndex) {
+      room.currentTurnIndex = Math.max(0, room.currentTurnIndex - 1);
+    }
+
     // Reassign host if host left
     if (player.isHost && room.players.size > 0) {
-      const nextHost = Array.from(room.players.values()).find((p) => p.connected) || Array.from(room.players.values())[0];
+      const nextHost =
+        Array.from(room.players.values()).find((p) => p.connected) ||
+        Array.from(room.players.values())[0];
       if (nextHost) {
         nextHost.isHost = true;
         this.broadcastSystemMessage(
@@ -795,6 +832,16 @@ export class RoomManager {
       this.rooms.delete(roomId);
       console.log(`[RoomManager] Room ${roomId} deleted (empty).`);
     } else {
+      const connectedCount = Array.from(room.players.values()).filter((p) => p.connected).length;
+      if (connectedCount < 2 && room.status !== 'LOBBY' && room.status !== 'GAME_OVER') {
+        this.clearAllTimers(room);
+        room.status = 'LOBBY';
+        this.broadcastSystemMessage(
+          roomId,
+          'Not enough players to continue the match. Returned to lobby.',
+          'system'
+        );
+      }
       this.broadcastRoomState(roomId);
     }
   }
@@ -805,6 +852,17 @@ export class RoomManager {
 
     const artist = room.currentArtistId ? room.players.get(room.currentArtistId) : null;
     const isArtist = requestingPlayerId === room.currentArtistId;
+
+    const activePlayers = room.turnOrder
+      .map((id) => room.players.get(id))
+      .filter((p): p is Player => !!p && p.connected);
+
+    const isLastTurnOfRound = room.currentTurnIndex + 1 >= activePlayers.length;
+    const nextArtist = !isLastTurnOfRound
+      ? activePlayers[room.currentTurnIndex + 1]
+      : room.round < room.totalRounds
+      ? activePlayers[0]
+      : null;
 
     // Word lengths calculation
     const wordLengths = room.currentMovie
@@ -820,6 +878,8 @@ export class RoomManager {
       currentArtistId: room.currentArtistId,
       currentArtistName: artist?.nickname || null,
       currentArtistAvatar: artist?.avatar || null,
+      nextArtistName: nextArtist?.nickname || null,
+      isLastTurnOfRound,
       hint: isArtist && room.currentMovie ? room.currentMovie : room.hint,
       revealedIndices: room.revealedIndices,
       wordLengths,

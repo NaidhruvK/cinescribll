@@ -115,6 +115,25 @@ export const GameScreen: React.FC<GameScreenProps> = ({
 
   // Split hint into spaced words for beautiful rendering
   const renderHint = () => {
+    if (gameState.status === 'CHOOSING_MOVIE') {
+      if (isArtist) {
+        return (
+          <div className="flex items-center gap-2">
+            <span className="text-xs sm:text-sm font-bold text-amber-300 animate-pulse">
+              🎬 Pick a Telugu movie from the options...
+            </span>
+          </div>
+        );
+      }
+      return (
+        <div className="flex items-center gap-2">
+          <span className="text-xs sm:text-sm font-bold text-amber-300 animate-pulse">
+            🎬 {gameState.currentArtistName || 'Artist'} is choosing a movie...
+          </span>
+        </div>
+      );
+    }
+
     if (isArtist && gameState.hint) {
       return (
         <div className="flex items-center gap-2">
@@ -129,7 +148,11 @@ export const GameScreen: React.FC<GameScreenProps> = ({
     }
 
     if (!gameState.hint) {
-      return <span className="text-gray-400 text-xs italic">Waiting for artist to choose...</span>;
+      return (
+        <span className="text-gray-400 text-xs italic">
+          🎬 {gameState.currentArtistName || 'Artist'} is preparing to draw...
+        </span>
+      );
     }
 
     const words = gameState.hint.split(' ');
@@ -221,6 +244,8 @@ export const GameScreen: React.FC<GameScreenProps> = ({
         <div className="lg:col-span-6 flex flex-col gap-3">
           <DrawingCanvas
             isArtist={isArtist && gameState.status === 'DRAWING'}
+            status={gameState.status}
+            currentArtistName={gameState.currentArtistName}
             canvasActions={canvasActions}
             socket={socket}
             onSendStrokeStart={onSendStrokeStart}

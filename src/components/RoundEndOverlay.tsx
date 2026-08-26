@@ -17,8 +17,11 @@ export const RoundEndOverlay: React.FC<RoundEndOverlayProps> = ({
   const movie = gameState.revealedMovie || 'Telugu Movie';
   const players = gameState.players;
 
-  // Filter players who scored this round
+  // Filter players who scored this turn
   const scoringPlayers = players.filter((p) => p.roundScore > 0);
+
+  const isLastTurn = gameState.isLastTurnOfRound;
+  const isFinalRound = gameState.round >= gameState.totalRounds;
 
   return (
     <div
@@ -28,8 +31,24 @@ export const RoundEndOverlay: React.FC<RoundEndOverlayProps> = ({
       <div className="relative w-full max-w-lg rounded-3xl bg-gradient-to-b from-[#281622] via-[#1c1424] to-[#120e18] border-2 border-red-600/80 shadow-2xl p-6 sm:p-8 text-center flex flex-col items-center overflow-hidden">
         {/* Top badge */}
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-950/80 border border-red-800/60 text-red-400 text-xs font-bold uppercase tracking-wider mb-3">
-          <Film className="w-3.5 h-3.5" />
-          <span>Round Completed</span>
+          {isLastTurn ? (
+            isFinalRound ? (
+              <>
+                <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                <span>Final Round Completed</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Round {gameState.round} Completed</span>
+              </>
+            )
+          ) : (
+            <>
+              <Film className="w-3.5 h-3.5 text-red-400" />
+              <span>Turn Ended</span>
+            </>
+          )}
         </div>
 
         <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">
@@ -46,7 +65,7 @@ export const RoundEndOverlay: React.FC<RoundEndOverlayProps> = ({
         {/* Scores summary */}
         <div className="w-full my-4">
           <div className="flex items-center justify-between text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 border-b border-gray-800 pb-1">
-            <span>Round Points Earned</span>
+            <span>Turn Points Earned</span>
             <span>+Score</span>
           </div>
 
@@ -85,9 +104,23 @@ export const RoundEndOverlay: React.FC<RoundEndOverlayProps> = ({
           </div>
         </div>
 
-        <div className="text-[11px] text-gray-400 font-semibold animate-pulse flex items-center gap-1.5 mt-2">
-          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-          <span>Next turn starting in a few seconds...</span>
+        <div className="text-xs text-amber-300 font-semibold animate-pulse flex items-center justify-center gap-1.5 mt-2">
+          <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          {isLastTurn ? (
+            isFinalRound ? (
+              <span>Match finished! Tallying final champion podium...</span>
+            ) : (
+              <span>
+                Round {gameState.round} completed! Round {gameState.round + 1} of {gameState.totalRounds} starts next...
+              </span>
+            )
+          ) : gameState.nextArtistName ? (
+            <span>
+              Next up: <span className="text-white font-bold">{gameState.nextArtistName}</span> will choose a movie...
+            </span>
+          ) : (
+            <span>Next turn starting in a few seconds...</span>
+          )}
         </div>
       </div>
     </div>

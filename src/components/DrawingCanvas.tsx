@@ -1,6 +1,7 @@
 import {
   Brush,
   Eraser,
+  Film,
   Paintbrush,
   RotateCcw,
   Trash2,
@@ -14,10 +15,13 @@ import {
   DrawStrokeEnd,
   DrawStrokeMove,
   DrawStrokeStart,
+  GameStatus,
 } from '../types';
 
 interface DrawingCanvasProps {
   isArtist: boolean;
+  status?: GameStatus;
+  currentArtistName?: string | null;
   canvasActions: CanvasAction[];
   socket?: Socket | null;
   onSendStrokeStart?: (data: DrawStrokeStart) => void;
@@ -56,6 +60,8 @@ const BRUSH_SIZES = [
 
 export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   isArtist,
+  status,
+  currentArtistName,
   canvasActions,
   socket,
   onSendStrokeStart,
@@ -553,8 +559,19 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
           id="cinescribbl-guesser-notice"
           className="py-2.5 px-4 rounded-xl bg-[#16121f] border border-gray-800/60 text-center text-xs text-gray-400 flex items-center justify-center gap-2"
         >
-          <Paintbrush className="w-3.5 h-3.5 text-red-400 animate-pulse" />
-          <span>Watch the canvas carefully and type your Telugu movie guess in the chat!</span>
+          {status === 'CHOOSING_MOVIE' ? (
+            <>
+              <Film className="w-3.5 h-3.5 text-amber-400 animate-spin" />
+              <span className="text-amber-300 font-medium">
+                🎬 {currentArtistName || 'Artist'} is choosing a Telugu movie...
+              </span>
+            </>
+          ) : (
+            <>
+              <Paintbrush className="w-3.5 h-3.5 text-red-400 animate-pulse" />
+              <span>Watch the canvas carefully and type your Telugu movie guess in the chat!</span>
+            </>
+          )}
         </div>
       )}
     </div>

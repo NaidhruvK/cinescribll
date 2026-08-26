@@ -129,6 +129,8 @@ export interface GameState {
   players: Player[];
   settings: RoomSettings;
   revealedMovie?: string;
+  nextArtistName?: string | null;
+  isLastTurnOfRound?: boolean;
   movieChoices?: string[]; // Only sent to active artist
   scoresChanged?: { playerId: string; points: number; total: number }[];
   winners?: { rank: number; player: Player }[];
