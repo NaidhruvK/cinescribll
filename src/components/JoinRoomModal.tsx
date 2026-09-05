@@ -102,7 +102,20 @@ export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({
               required
               maxLength={8}
               value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+              onChange={(e) => {
+                const val = e.target.value.toUpperCase();
+                setRoomCode(val);
+                if (val.length >= 4) {
+                  try {
+                    const saved = localStorage.getItem(`cinescribbl_session_${val}`);
+                    if (saved) {
+                      const parsed = JSON.parse(saved);
+                      if (parsed.nickname) setNickname(parsed.nickname);
+                      if (parsed.avatar) setSelectedAvatar(parsed.avatar);
+                    }
+                  } catch (err) {}
+                }
+              }}
               placeholder="e.g. ABCD12"
               className="w-full bg-[#120e18] border border-gray-700/80 focus:border-red-500 rounded-xl px-4 py-3 text-base text-white focus:outline-none focus:ring-2 focus:ring-red-500/20 font-mono font-bold tracking-widest uppercase"
             />

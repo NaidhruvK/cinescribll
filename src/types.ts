@@ -35,6 +35,7 @@ export interface Player {
   isReady: boolean;
   connected: boolean;
   rank?: number;
+  reconnectToken?: string;
 }
 
 export type GameStatus =
@@ -139,17 +140,42 @@ export interface GameState {
 export interface ClientToServerEvents {
   create_room: (
     data: { nickname: string; avatar: AvatarId; settings: RoomSettings },
-    callback: (res: { success: boolean; roomId?: string; error?: string }) => void
+    callback: (res: {
+      success: boolean;
+      roomId?: string;
+      player?: Player;
+      reconnectToken?: string;
+      error?: string;
+      gameState?: GameState;
+    }) => void
   ) => void;
 
   join_room: (
-    data: { roomId: string; nickname: string; avatar: AvatarId },
-    callback: (res: { success: boolean; error?: string; gameState?: GameState }) => void
+    data: {
+      roomId: string;
+      nickname: string;
+      avatar: AvatarId;
+      existingPlayerId?: string;
+      reconnectToken?: string;
+    },
+    callback: (res: {
+      success: boolean;
+      error?: string;
+      player?: Player;
+      reconnectToken?: string;
+      gameState?: GameState;
+    }) => void
   ) => void;
 
   reconnect_player: (
-    data: { roomId: string; playerId: string },
-    callback: (res: { success: boolean; error?: string; gameState?: GameState }) => void
+    data: { roomId: string; playerId: string; reconnectToken?: string },
+    callback: (res: {
+      success: boolean;
+      error?: string;
+      player?: Player;
+      reconnectToken?: string;
+      gameState?: GameState;
+    }) => void
   ) => void;
 
   update_profile: (data: { nickname: string; avatar: AvatarId }) => void;

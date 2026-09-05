@@ -49,17 +49,23 @@ export function useSocket() {
       // Attempt auto-reconnect if session exists
       const savedRoomId = localStorage.getItem('cinescribbl_room_id');
       const savedPlayerId = localStorage.getItem('cinescribbl_player_id');
+      const savedToken = localStorage.getItem('cinescribbl_reconnect_token') || undefined;
 
       if (savedRoomId && savedPlayerId) {
         socket.emit(
           'reconnect_player',
-          { roomId: savedRoomId, playerId: savedPlayerId },
+          { roomId: savedRoomId, playerId: savedPlayerId, reconnectToken: savedToken },
           (res: any) => {
             if (res.success && res.player && res.gameState) {
               setCurrentPlayer(res.player);
               setGameState(res.gameState);
+              localStorage.setItem('cinescribbl_player', JSON.stringify(res.player));
+              if (res.reconnectToken) {
+                localStorage.setItem('cinescribbl_reconnect_token', res.reconnectToken);
+              }
             } else {
               localStorage.removeItem('cinescribbl_room_id');
+              localStorage.removeItem('cinescribbl_reconnect_token');
             }
           }
         );
@@ -190,9 +196,23 @@ export function useSocket() {
               setGameState(res.gameState);
               setChatMessages([]);
               setCanvasActions([]);
+
+              const token = res.reconnectToken || '';
               localStorage.setItem('cinescribbl_room_id', res.roomId);
               localStorage.setItem('cinescribbl_player_id', res.player.id);
               localStorage.setItem('cinescribbl_player', JSON.stringify(res.player));
+              if (token) {
+                localStorage.setItem('cinescribbl_reconnect_token', token);
+                localStorage.setItem(
+                  `cinescribbl_session_${res.roomId}`,
+                  JSON.stringify({
+                    playerId: res.player.id,
+                    reconnectToken: token,
+                    nickname: res.player.nickname,
+                    avatar: res.player.avatar,
+                  })
+                );
+              }
               resolve({ success: true });
             } else {
               resolve({ success: false, error: res.error || 'Failed to create room' });
@@ -216,18 +236,57 @@ export function useSocket() {
           return;
         }
 
+        const cleanRoom = roomId.trim().toUpperCase();
+
+        // Check for existing saved session for this room
+        let existingPlayerId: string | undefined;
+        let reconnectToken: string | undefined;
+
+        try {
+          const sessionRaw = localStorage.getItem(`cinescribbl_session_${cleanRoom}`);
+          if (sessionRaw) {
+            const session = JSON.parse(sessionRaw);
+            if (session.playerId) {
+              existingPlayerId = session.playerId;
+              reconnectToken = session.reconnectToken;
+            }
+          }
+        } catch (e) {}
+
+        if (!existingPlayerId) {
+          const savedRoom = localStorage.getItem('cinescribbl_room_id');
+          if (savedRoom === cleanRoom) {
+            existingPlayerId = localStorage.getItem('cinescribbl_player_id') || undefined;
+            reconnectToken = localStorage.getItem('cinescribbl_reconnect_token') || undefined;
+          }
+        }
+
         socketRef.current.emit(
           'join_room',
-          { roomId, nickname, avatar },
+          { roomId: cleanRoom, nickname, avatar, existingPlayerId, reconnectToken },
           (res: any) => {
             if (res.success && res.player && res.gameState) {
               setCurrentPlayer(res.player);
               setGameState(res.gameState);
               setChatMessages([]);
               setCanvasActions([]);
-              localStorage.setItem('cinescribbl_room_id', roomId.toUpperCase());
+
+              const token = res.reconnectToken || reconnectToken || '';
+              localStorage.setItem('cinescribbl_room_id', cleanRoom);
               localStorage.setItem('cinescribbl_player_id', res.player.id);
               localStorage.setItem('cinescribbl_player', JSON.stringify(res.player));
+              if (token) {
+                localStorage.setItem('cinescribbl_reconnect_token', token);
+                localStorage.setItem(
+                  `cinescribbl_session_${cleanRoom}`,
+                  JSON.stringify({
+                    playerId: res.player.id,
+                    reconnectToken: token,
+                    nickname: res.player.nickname,
+                    avatar: res.player.avatar,
+                  })
+                );
+              }
               resolve({ success: true });
             } else {
               resolve({ success: false, error: res.error || 'Failed to join room' });
@@ -340,7 +399,12 @@ export function useSocket() {
     if (socketRef.current) {
       socketRef.current.emit('leave_room');
     }
+    // Remove auto-reconnect keys so player returns to welcome screen,
+    // but the room-specific session cinescribbl_session_${roomId} remains in localStorage
+    // so if they enter this room code again in Join Room, they can rejoin seamlessly!
     localStorage.removeItem('cinescribbl_room_id');
+    localStorage.removeItem('cinescribbl_player_id');
+    localStorage.removeItem('cinescribbl_reconnect_token');
     setGameState(null);
     setChatMessages([]);
     setCanvasActions([]);

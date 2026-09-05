@@ -51,10 +51,42 @@ export class RoomManager {
   private rooms: Map<string, Room> = new Map();
   private socketToPlayer: Map<string, { roomId: string; playerId: string }> = new Map();
   private disconnectTimeouts: Map<string, NodeJS.Timeout> = new Map();
+  private emptyRoomTimeouts: Map<string, NodeJS.Timeout> = new Map();
   private io: SocketIOServer;
 
   constructor(io: SocketIOServer) {
     this.io = io;
+  }
+
+  private generateToken(): string {
+    return (
+      Math.random().toString(36).substring(2, 12) +
+      Math.random().toString(36).substring(2, 12)
+    );
+  }
+
+  private scheduleEmptyRoomCleanup(roomId: string) {
+    if (this.emptyRoomTimeouts.has(roomId)) return;
+    const timeout = setTimeout(() => {
+      const room = this.rooms.get(roomId);
+      if (room) {
+        const connectedCount = Array.from(room.players.values()).filter((p) => p.connected).length;
+        if (connectedCount === 0) {
+          this.clearAllTimers(room);
+          this.rooms.delete(roomId);
+          console.log(`[RoomManager] Room ${roomId} cleaned up after being empty for 3 minutes.`);
+        }
+      }
+      this.emptyRoomTimeouts.delete(roomId);
+    }, 180000);
+    this.emptyRoomTimeouts.set(roomId, timeout);
+  }
+
+  private cancelEmptyRoomCleanup(roomId: string) {
+    if (this.emptyRoomTimeouts.has(roomId)) {
+      clearTimeout(this.emptyRoomTimeouts.get(roomId)!);
+      this.emptyRoomTimeouts.delete(roomId);
+    }
   }
 
   public createRoom(
@@ -62,9 +94,10 @@ export class RoomManager {
     nickname: string,
     avatar: AvatarId,
     settings: RoomSettings
-  ): { roomId: string; player: Player } {
+  ): { roomId: string; player: Player; reconnectToken: string } {
     const roomId = this.generateRoomCode();
     const playerId = `p_${Math.random().toString(36).substring(2, 9)}`;
+    const reconnectToken = this.generateToken();
 
     const player: Player = {
       id: playerId,
@@ -78,6 +111,7 @@ export class RoomManager {
       hasGuessed: false,
       isReady: true,
       connected: true,
+      reconnectToken,
     };
 
     const room: Room = {
@@ -113,7 +147,7 @@ export class RoomManager {
     this.rooms.set(roomId, room);
     this.socketToPlayer.set(socketId, { roomId, playerId });
 
-    return { roomId, player };
+    return { roomId, player, reconnectToken };
   }
 
   public joinRoom(
@@ -121,8 +155,15 @@ export class RoomManager {
     socketId: string,
     nickname: string,
     avatar: AvatarId,
-    existingPlayerId?: string
-  ): { success: boolean; error?: string; player?: Player; room?: Room } {
+    existingPlayerId?: string,
+    reconnectToken?: string
+  ): {
+    success: boolean;
+    error?: string;
+    player?: Player;
+    room?: Room;
+    reconnectToken?: string;
+  } {
     const normalizedRoomId = roomId.trim().toUpperCase();
     const room = this.rooms.get(normalizedRoomId);
 
@@ -130,13 +171,30 @@ export class RoomManager {
       return { success: false, error: 'Room not found. Please check the room code.' };
     }
 
-    // Check reconnection
+    this.cancelEmptyRoomCleanup(normalizedRoomId);
+
+    // 1. Check reconnection / rejoin of existing player
     if (existingPlayerId && room.players.has(existingPlayerId)) {
       const player = room.players.get(existingPlayerId)!;
+
+      // Validate security reconnectToken if present
+      if (player.reconnectToken && reconnectToken && player.reconnectToken !== reconnectToken) {
+        return { success: false, error: 'Invalid reconnect authorization credentials.' };
+      }
+
+      // If old socket still in map, remove it
+      if (player.socketId && player.socketId !== socketId) {
+        this.socketToPlayer.delete(player.socketId);
+      }
+
       player.socketId = socketId;
       player.connected = true;
 
-      // Clear disconnect timer
+      // Update nickname or avatar if provided in rejoin modal
+      if (nickname.trim()) player.nickname = nickname.trim();
+      if (avatar) player.avatar = avatar;
+
+      // Clear any disconnect timer
       const timeoutKey = `${normalizedRoomId}:${existingPlayerId}`;
       if (this.disconnectTimeouts.has(timeoutKey)) {
         clearTimeout(this.disconnectTimeouts.get(timeoutKey)!);
@@ -145,18 +203,48 @@ export class RoomManager {
 
       this.socketToPlayer.set(socketId, { roomId: normalizedRoomId, playerId: existingPlayerId });
 
-      this.broadcastSystemMessage(
-        normalizedRoomId,
-        `🎬 ${player.nickname} reconnected!`,
-        'join'
-      );
+      // If active game, RESET SCORE TO 0 (Requirement 2, 6, 22)
+      if (room.status !== 'LOBBY' && room.status !== 'GAME_OVER') {
+        player.score = 0;
+        player.roundScore = 0;
+        player.hasGuessed = false;
+        player.guessTime = undefined;
+        player.isArtist = room.currentArtistId === player.id;
+
+        // Ensure player is present in turnOrder for upcoming rounds/turns
+        if (!room.turnOrder.includes(player.id)) {
+          room.turnOrder.push(player.id);
+        }
+
+        this.broadcastSystemMessage(
+          normalizedRoomId,
+          `🎬 ${player.nickname} rejoined the game! (Score reset to 0)`,
+          'join'
+        );
+      } else {
+        this.broadcastSystemMessage(
+          normalizedRoomId,
+          `🍿 ${player.nickname} reconnected to lobby!`,
+          'join'
+        );
+      }
+
       this.broadcastRoomState(normalizedRoomId);
 
-      return { success: true, player, room };
+      return {
+        success: true,
+        player,
+        room,
+        reconnectToken: player.reconnectToken,
+      };
     }
 
+    // 2. Reject brand-new players if game is already active
     if (room.status !== 'LOBBY' && room.status !== 'GAME_OVER') {
-      return { success: false, error: 'Game is currently in progress. Please wait for next game.' };
+      return {
+        success: false,
+        error: 'Game is currently in progress. Only returning players can rejoin this room.',
+      };
     }
 
     if (room.players.size >= room.settings.maxPlayers) {
@@ -173,6 +261,7 @@ export class RoomManager {
     }
 
     const playerId = `p_${Math.random().toString(36).substring(2, 9)}`;
+    const newReconnectToken = this.generateToken();
     const player: Player = {
       id: playerId,
       socketId,
@@ -185,6 +274,7 @@ export class RoomManager {
       hasGuessed: false,
       isReady: true,
       connected: true,
+      reconnectToken: newReconnectToken,
     };
 
     room.players.set(playerId, player);
@@ -200,7 +290,7 @@ export class RoomManager {
     );
     this.broadcastRoomState(normalizedRoomId);
 
-    return { success: true, player, room };
+    return { success: true, player, room, reconnectToken: newReconnectToken };
   }
 
   public updateProfile(socketId: string, nickname: string, avatar: AvatarId): boolean {
@@ -289,41 +379,52 @@ export class RoomManager {
     room.correctGuessCount = 0;
     this.io.to(room.id).emit('clear_canvas');
 
-    const activePlayers = room.turnOrder
-      .map((id) => room.players.get(id))
-      .filter((p): p is Player => !!p && p.connected);
-
-    if (activePlayers.length < 2) {
+    const connectedPlayers = Array.from(room.players.values()).filter((p) => p.connected);
+    if (connectedPlayers.length < 2) {
       room.status = 'LOBBY';
       this.broadcastSystemMessage(
         room.id,
-        'Not enough players to continue. Returned to lobby.',
+        'Not enough players connected to continue. Returned to lobby.',
         'system'
       );
       this.broadcastRoomState(room.id);
       return;
     }
 
-    if (room.currentTurnIndex >= activePlayers.length) {
-      // Completed full round of turns across all active players
-      room.round++;
-      room.currentTurnIndex = 0;
-      if (room.round > room.totalRounds) {
-        this.endGame(room);
-        return;
+    // Advance currentTurnIndex past any disconnected players in turnOrder
+    let cycleCount = 0;
+    while (cycleCount < room.turnOrder.length * 2) {
+      if (room.currentTurnIndex >= room.turnOrder.length) {
+        room.round++;
+        room.currentTurnIndex = 0;
+        if (room.round > room.totalRounds) {
+          this.endGame(room);
+          return;
+        }
+        this.broadcastSystemMessage(
+          room.id,
+          `🔔 Round ${room.round} of ${room.totalRounds} starts now!`,
+          'system'
+        );
       }
-      this.broadcastSystemMessage(
-        room.id,
-        `🔔 Round ${room.round} of ${room.totalRounds} starts now!`,
-        'system'
-      );
+
+      const candidateId = room.turnOrder[room.currentTurnIndex];
+      const candidate = room.players.get(candidateId);
+      if (candidate && candidate.connected) {
+        break;
+      }
+      // Candidate is disconnected or missing, advance index
+      room.currentTurnIndex++;
+      cycleCount++;
     }
 
-    const artist = activePlayers[room.currentTurnIndex];
-    if (!artist) {
-      room.currentTurnIndex = 0;
-      this.startTurn(room);
-      return;
+    const artistId = room.turnOrder[room.currentTurnIndex];
+    let artist = room.players.get(artistId);
+    if (!artist || !artist.connected) {
+      artist = connectedPlayers[0];
+      room.currentArtistId = artist.id;
+    } else {
+      room.currentArtistId = artist.id;
     }
 
     room.currentArtistId = artist.id;
@@ -339,8 +440,28 @@ export class RoomManager {
       p.roundScore = 0;
     });
 
-    // Pick 3 random Telugu movies
+    // Pick 3 random unique unused Telugu movies for this turn
     const choices = getRandomMovieChoices(3, room.usedMovies);
+
+    if (choices.length < 3) {
+      console.warn(
+        `[RoomManager] Room ${room.id} ran out of unique movies in dataset (${choices.length} available). Ending match gracefully.`
+      );
+      this.broadcastSystemMessage(
+        room.id,
+        '⚠️ Movie dataset exhausted: Not enough unique unused Telugu movies remaining for 3 choices. Ending match...',
+        'system'
+      );
+      this.endGame(room);
+      return;
+    }
+
+    // Atomically mark all 3 offered choices as used for this game session
+    // Once offered to any player, these movies will not be offered again during this game
+    for (const choice of choices) {
+      room.usedMovies.add(choice.trim().toLowerCase());
+    }
+
     room.currentMovieChoices = choices;
 
     this.broadcastSystemMessage(
@@ -375,8 +496,14 @@ export class RoomManager {
       room.choiceTimeout = null;
     }
 
-    room.currentMovie = movie;
-    room.usedMovies.add(movie.toLowerCase());
+    // Validate that the selected movie is from the offered choices
+    const matchedChoice = room.currentMovieChoices.find(
+      (c) => c.trim().toLowerCase() === movie.trim().toLowerCase()
+    );
+    const selectedMovie = matchedChoice || room.currentMovieChoices[0] || movie;
+
+    room.currentMovie = selectedMovie;
+    room.usedMovies.add(selectedMovie.trim().toLowerCase());
     room.status = 'DRAWING';
     room.remainingTime = room.settings.drawTime;
     room.totalTime = room.settings.drawTime;
@@ -576,11 +703,11 @@ export class RoomManager {
       total: p.score,
     }));
 
-    const activePlayers = room.turnOrder
-      .map((id) => room.players.get(id))
-      .filter((p): p is Player => !!p && p.connected);
+    const remainingConnectedInRound = room.turnOrder
+      .slice(room.currentTurnIndex + 1)
+      .filter((id) => room.players.get(id)?.connected);
 
-    const isLastTurnInRound = room.currentTurnIndex + 1 >= activePlayers.length;
+    const isLastTurnInRound = remainingConnectedInRound.length === 0;
     const isFinalTurnOfGame = isLastTurnInRound && room.round >= room.totalRounds;
 
     this.broadcastSystemMessage(
@@ -654,6 +781,14 @@ export class RoomManager {
     room.canvasHistory = [];
     room.currentArtistId = null;
     room.currentMovie = null;
+
+    // Prune players who were disconnected at end of match
+    for (const [pId, p] of room.players.entries()) {
+      if (!p.connected) {
+        room.players.delete(pId);
+      }
+    }
+    room.turnOrder = Array.from(room.players.values()).map((p) => p.id);
 
     room.players.forEach((p) => {
       p.score = 0;
@@ -756,25 +891,55 @@ export class RoomManager {
 
     const { roomId, playerId } = session;
     const room = this.rooms.get(roomId);
-    if (!room) return;
+    if (!room) {
+      this.socketToPlayer.delete(socketId);
+      return;
+    }
 
     const player = room.players.get(playerId);
-    if (!player) return;
+    if (!player) {
+      this.socketToPlayer.delete(socketId);
+      return;
+    }
 
     player.connected = false;
+    this.socketToPlayer.delete(socketId);
+
     this.broadcastSystemMessage(roomId, `⚠️ ${player.nickname} disconnected.`, 'leave');
-    this.broadcastRoomState(roomId);
 
-    // If game in lobby, or player permanently leaves
-    const timeoutKey = `${roomId}:${playerId}`;
-    const timeout = setTimeout(() => {
-      this.removePlayerPermanently(roomId, playerId);
-      this.disconnectTimeouts.delete(timeoutKey);
-    }, 45000);
+    // If host disconnected and other connected players exist, pass host
+    if (player.isHost) {
+      const nextHost = Array.from(room.players.values()).find((p) => p.connected && p.id !== playerId);
+      if (nextHost) {
+        player.isHost = false;
+        nextHost.isHost = true;
+        this.broadcastSystemMessage(
+          roomId,
+          `👑 ${nextHost.nickname} is now the room host.`,
+          'system'
+        );
+      }
+    }
 
-    this.disconnectTimeouts.set(timeoutKey, timeout);
+    // If in LOBBY, set a 60-second timeout to clean up abandoned slot
+    if (room.status === 'LOBBY') {
+      const timeoutKey = `${roomId}:${playerId}`;
+      const timeout = setTimeout(() => {
+        if (room.status === 'LOBBY' && !player.connected) {
+          this.removePlayerPermanently(roomId, playerId);
+        }
+        this.disconnectTimeouts.delete(timeoutKey);
+      }, 60000);
+      this.disconnectTimeouts.set(timeoutKey, timeout);
+    }
 
-    // If current artist disconnected during choosing or drawing, advance turn
+    // Check remaining connected players
+    const connectedPlayers = Array.from(room.players.values()).filter((p) => p.connected);
+    if (connectedPlayers.length === 0) {
+      this.scheduleEmptyRoomCleanup(roomId);
+    }
+
+    // If current artist disconnected during choosing or drawing, advance turn safely!
     if (
       (room.status === 'CHOOSING_MOVIE' || room.status === 'DRAWING') &&
       room.currentArtistId === playerId
@@ -785,14 +950,73 @@ export class RoomManager {
         'system'
       );
       this.endTurn(room);
+    } else {
+      this.broadcastRoomState(roomId);
     }
   }
 
   public leaveRoom(socketId: string): void {
     const session = this.socketToPlayer.get(socketId);
     if (!session) return;
-    this.removePlayerPermanently(session.roomId, session.playerId);
+
+    const { roomId, playerId } = session;
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      this.socketToPlayer.delete(socketId);
+      return;
+    }
+
+    const player = room.players.get(playerId);
+    if (!player) {
+      this.socketToPlayer.delete(socketId);
+      return;
+    }
+
     this.socketToPlayer.delete(socketId);
+
+    // If in LOBBY or GAME_OVER, remove permanently
+    if (room.status === 'LOBBY' || room.status === 'GAME_OVER') {
+      this.removePlayerPermanently(roomId, playerId);
+      return;
+    }
+
+    // DURING ACTIVE GAME: Mark as disconnected/left, preserve membership for rejoining!
+    player.connected = false;
+    this.broadcastSystemMessage(roomId, `👋 ${player.nickname} left the room.`, 'leave');
+
+    // If host left, pass host
+    if (player.isHost) {
+      const nextHost = Array.from(room.players.values()).find((p) => p.connected && p.id !== playerId);
+      if (nextHost) {
+        player.isHost = false;
+        nextHost.isHost = true;
+        this.broadcastSystemMessage(
+          roomId,
+          `👑 ${nextHost.nickname} is now the room host.`,
+          'system'
+        );
+      }
+    }
+
+    const connectedPlayers = Array.from(room.players.values()).filter((p) => p.connected);
+    if (connectedPlayers.length === 0) {
+      this.scheduleEmptyRoomCleanup(roomId);
+    }
+
+    // If artist left during choosing or drawing, advance turn safely!
+    if (
+      (room.status === 'CHOOSING_MOVIE' || room.status === 'DRAWING') &&
+      room.currentArtistId === playerId
+    ) {
+      this.broadcastSystemMessage(
+        roomId,
+        `🎨 Artist left the room! Passing turn to next player...`,
+        'system'
+      );
+      this.endTurn(room);
+    } else {
+      this.broadcastRoomState(roomId);
+    }
   }
 
   private removePlayerPermanently(roomId: string, playerId: string) {
@@ -832,16 +1056,6 @@ export class RoomManager {
       this.rooms.delete(roomId);
       console.log(`[RoomManager] Room ${roomId} deleted (empty).`);
     } else {
-      const connectedCount = Array.from(room.players.values()).filter((p) => p.connected).length;
-      if (connectedCount < 2 && room.status !== 'LOBBY' && room.status !== 'GAME_OVER') {
-        this.clearAllTimers(room);
-        room.status = 'LOBBY';
-        this.broadcastSystemMessage(
-          roomId,
-          'Not enough players to continue the match. Returned to lobby.',
-          'system'
-        );
-      }
       this.broadcastRoomState(roomId);
     }
   }
@@ -853,21 +1067,40 @@ export class RoomManager {
     const artist = room.currentArtistId ? room.players.get(room.currentArtistId) : null;
     const isArtist = requestingPlayerId === room.currentArtistId;
 
-    const activePlayers = room.turnOrder
-      .map((id) => room.players.get(id))
-      .filter((p): p is Player => !!p && p.connected);
+    const remainingConnectedInRound = room.turnOrder
+      .slice(room.currentTurnIndex + 1)
+      .filter((id) => room.players.get(id)?.connected);
 
-    const isLastTurnOfRound = room.currentTurnIndex + 1 >= activePlayers.length;
-    const nextArtist = !isLastTurnOfRound
-      ? activePlayers[room.currentTurnIndex + 1]
+    const isLastTurnOfRound = remainingConnectedInRound.length === 0;
+    const nextArtistId = !isLastTurnOfRound
+      ? remainingConnectedInRound[0]
       : room.round < room.totalRounds
-      ? activePlayers[0]
+      ? room.turnOrder.find((id) => room.players.get(id)?.connected) || null
       : null;
+
+    const nextArtist = nextArtistId ? room.players.get(nextArtistId) : null;
 
     // Word lengths calculation
     const wordLengths = room.currentMovie
       ? room.currentMovie.split(' ').map((w) => w.length)
       : [];
+
+    // Strip private reconnectToken from public GameState
+    const publicPlayers: Player[] = Array.from(room.players.values()).map((p) => ({
+      id: p.id,
+      socketId: p.socketId,
+      nickname: p.nickname,
+      avatar: p.avatar,
+      score: p.score,
+      roundScore: p.roundScore,
+      isHost: p.isHost,
+      isArtist: p.isArtist,
+      hasGuessed: p.hasGuessed,
+      guessTime: p.guessTime,
+      isReady: p.isReady,
+      connected: p.connected,
+      rank: p.rank,
+    }));
 
     return {
       roomId: room.id,
@@ -885,7 +1118,7 @@ export class RoomManager {
       wordLengths,
       remainingTime: room.remainingTime,
       totalTime: room.totalTime,
-      players: Array.from(room.players.values()),
+      players: publicPlayers,
       settings: room.settings,
       revealedMovie:
         room.status === 'ROUND_END' || room.status === 'GAME_OVER'

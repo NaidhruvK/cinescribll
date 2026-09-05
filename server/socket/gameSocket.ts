@@ -22,7 +22,7 @@ export function setupGameSocket(io: SocketIOServer, roomManager: RoomManager) {
         callback: (res: any) => void
       ) => {
         try {
-          const { roomId, player } = roomManager.createRoom(
+          const { roomId, player, reconnectToken } = roomManager.createRoom(
             socket.id,
             data.nickname,
             data.avatar,
@@ -30,7 +30,7 @@ export function setupGameSocket(io: SocketIOServer, roomManager: RoomManager) {
           );
           socket.join(roomId);
           const gameState = roomManager.getRoomState(roomId, player.id);
-          callback({ success: true, roomId, player, gameState });
+          callback({ success: true, roomId, player, reconnectToken, gameState });
         } catch (err: any) {
           callback({ success: false, error: err?.message || 'Failed to create room' });
         }
@@ -41,7 +41,13 @@ export function setupGameSocket(io: SocketIOServer, roomManager: RoomManager) {
     socket.on(
       'join_room',
       (
-        data: { roomId: string; nickname: string; avatar: AvatarId; existingPlayerId?: string },
+        data: {
+          roomId: string;
+          nickname: string;
+          avatar: AvatarId;
+          existingPlayerId?: string;
+          reconnectToken?: string;
+        },
         callback: (res: any) => void
       ) => {
         try {
@@ -50,7 +56,8 @@ export function setupGameSocket(io: SocketIOServer, roomManager: RoomManager) {
             socket.id,
             data.nickname,
             data.avatar,
-            data.existingPlayerId
+            data.existingPlayerId,
+            data.reconnectToken
           );
 
           if (!result.success || !result.player || !result.room) {
@@ -62,7 +69,12 @@ export function setupGameSocket(io: SocketIOServer, roomManager: RoomManager) {
           const gameState = roomManager.getRoomState(result.room.id, result.player.id);
           const canvasHistory = roomManager.getCanvasHistory(result.room.id);
 
-          callback({ success: true, player: result.player, gameState });
+          callback({
+            success: true,
+            player: result.player,
+            reconnectToken: result.reconnectToken,
+            gameState,
+          });
 
           // Send current canvas drawing to joining player
           if (canvasHistory.length > 0) {
@@ -77,20 +89,29 @@ export function setupGameSocket(io: SocketIOServer, roomManager: RoomManager) {
     // Reconnect
     socket.on(
       'reconnect_player',
-      (data: { roomId: string; playerId: string }, callback: (res: any) => void) => {
+      (
+        data: { roomId: string; playerId: string; reconnectToken?: string },
+        callback: (res: any) => void
+      ) => {
         try {
           const result = roomManager.joinRoom(
             data.roomId,
             socket.id,
             '',
             'hero',
-            data.playerId
+            data.playerId,
+            data.reconnectToken
           );
           if (result.success && result.player && result.room) {
             socket.join(result.room.id);
             const gameState = roomManager.getRoomState(result.room.id, result.player.id);
             const canvasHistory = roomManager.getCanvasHistory(result.room.id);
-            callback({ success: true, player: result.player, gameState });
+            callback({
+              success: true,
+              player: result.player,
+              reconnectToken: result.reconnectToken,
+              gameState,
+            });
             if (canvasHistory.length > 0) {
               socket.emit('canvas_history', canvasHistory);
             }

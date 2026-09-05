@@ -9,57 +9,76 @@ export function loadMovies(): string[] {
     return cachedMovies;
   }
 
+  const seen = new Set<string>();
+  const uniqueList: string[] = [];
+
+  const addUnique = (rawList: unknown[]) => {
+    for (const item of rawList) {
+      if (typeof item === 'string') {
+        const trimmed = item.trim();
+        const lower = trimmed.toLowerCase();
+        if (trimmed.length > 0 && !seen.has(lower)) {
+          seen.add(lower);
+          uniqueList.push(trimmed);
+        }
+      }
+    }
+  };
+
   try {
     const filePath = path.join(process.cwd(), 'server', 'data', 'movies.json');
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf-8');
-      const parsed: string[] = JSON.parse(data);
-      const unique = Array.from(
-        new Set(
-          parsed
-            .map((m) => m.trim())
-            .filter((m) => m.length > 0)
-        )
-      );
-      cachedMovies = unique;
-      console.log(`[MovieService] Loaded ${cachedMovies.length} Telugu movies from dataset.`);
-      return cachedMovies;
+      const parsed: unknown[] = JSON.parse(data);
+      if (Array.isArray(parsed)) {
+        addUnique(parsed);
+      }
     }
   } catch (err) {
     console.warn('[MovieService] Note: reading from fs failed, falling back to bundled dataset:', err);
   }
 
-  // Fallback to bundled movies from import
-  if (Array.isArray(bundledMovies) && bundledMovies.length > 0) {
-    const unique = Array.from(
-      new Set(
-        bundledMovies
-          .map((m) => String(m).trim())
-          .filter((m) => m.length > 0)
-      )
-    );
-    cachedMovies = unique;
-    console.log(`[MovieService] Loaded ${cachedMovies.length} Telugu movies from bundled dataset.`);
-    return cachedMovies;
+  // Fallback / supplement from bundled movies if needed
+  if (uniqueList.length === 0 && Array.isArray(bundledMovies)) {
+    addUnique(bundledMovies);
   }
 
+  cachedMovies = uniqueList;
+  console.log(`[MovieService] Loaded ${cachedMovies.length} unique Telugu movies.`);
   return cachedMovies;
+}
+
+export function getTotalMovieCount(): number {
+  return loadMovies().length;
+}
+
+export function getRemainingMovieCount(usedMovies: Set<string> = new Set()): number {
+  const allMovies = loadMovies();
+  return allMovies.filter((m) => !usedMovies.has(m.trim().toLowerCase())).length;
 }
 
 export function getRandomMovieChoices(count: number = 3, usedMovies: Set<string> = new Set()): string[] {
   const allMovies = loadMovies();
   if (allMovies.length === 0) {
-    return ['Athadu', 'Pokiri', 'Magadheera'];
+    return [];
   }
 
-  // Filter out used movies if possible
-  let available = allMovies.filter((m) => !usedMovies.has(m.toLowerCase()));
+  // Strictly filter out any movie that has been previously offered or used in this game session
+  const available = allMovies.filter((m) => !usedMovies.has(m.trim().toLowerCase()));
+
   if (available.length < count) {
-    // If not enough unused movies left, fallback to all movies
-    available = [...allMovies];
+    // Return all remaining available movies without reusing old movies
+    return [...available];
   }
 
-  // Shuffle and pick
-  const shuffled = [...available].sort(() => 0.5 - Math.random());
-  return shuffled.slice(0, Math.min(count, shuffled.length));
+  // Fisher-Yates shuffle algorithm on available pool for uniform randomness
+  const pool = [...available];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = temp;
+  }
+
+  return pool.slice(0, count);
 }
